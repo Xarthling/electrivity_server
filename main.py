@@ -18,6 +18,7 @@ from cachetools import LRUCache
 import threading
 from datetime import datetime, timedelta
 from typing import List, Dict
+import calendar
 
 
 app = FastAPI()
@@ -56,208 +57,15 @@ async def root():
     return {"message": "Hello World"}
 
 
-@app.post("/fetchGraph")
-async def fetch_graph(frequency: int = Form(...)):
-    try:
-        data = []
-        if frequency == 1:
-            print(f'\n\n{frequency}\n\n')
-            data = generate_data_for_hours()
-        elif frequency == 2:
-            print(f'\n\n{frequency}\n\n')
-            data = generate_data_for_days_from_database(7)
-        elif frequency == 3:
-            data = generate_data_for_month_from_database(30)
-        elif frequency == 4:
-            data = generate_data_for_year_from_database(12)
-        else:
-            raise HTTPException(status_code=400, detail="Invalid frequency value")
-
-        return data
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-def generate_data_for_hours():
-    print("1")
-
-    try:
-        labels = []
-        values = []
-
-        current_timestamp = datetime.now()
-        cursor = connection.cursor()
-
-        for i in range(24):
-            start_timestamp = current_timestamp - timedelta(hours=i)
-            end_timestamp = start_timestamp + timedelta(hours=1)
-            query = "SELECT `usage` FROM realtime_usages WHERE timestamp >= %s AND timestamp < %s"
-            cursor.execute(query, (start_timestamp, end_timestamp))
-            minute_wise_data = cursor.fetchall()
-
-            total_usage = sum(data[0] for data in minute_wise_data)
-            total_count = len(minute_wise_data)
-
-            average_usage = total_usage / total_count if total_count > 0 else 0
-
-            labels.append(start_timestamp.strftime('%H:00'))
-            values.append(average_usage)
-
-        labels.reverse()
-        values.reverse()
-        
-        cursor.close()
-        print("Labels:", labels)
-        print("Values:", values)
-
-        data = {'labels': labels, 'values': values}
-        return JSONResponse(content=data)
-
-    except Exception as e:
-        # Handle any errors
-        print(f"An error occurred: {e}")
-        raise e
-
-
-def generate_data_for_days_from_database(number_of_days: int):
-    print("2")
-
-    try:
-        labels = []
-        values = []
-
-        current_timestamp = datetime.now()
-
-        # Assuming you have a database connection
-        cursor = connection.cursor()
-
-        for i in range(number_of_days):
-            start_date = current_timestamp - timedelta(days=i)
-            end_date = start_date + timedelta(days=1)
-
-            query = "SELECT consumption FROM consumptions WHERE date >= %s AND date < %s"
-            cursor.execute(query, (start_date.date(), end_date.date()))
-            daily_consumptions = cursor.fetchall()
-
-            total_consumption = sum(data[0] for data in daily_consumptions)
-            average_consumption = total_consumption / len(daily_consumptions) if daily_consumptions else 0
-
-            day_name = start_date.strftime('%A')
-            labels.append(day_name)
-            values.append(average_consumption)
-
-        labels.reverse()
-        values.reverse()
-
-        cursor.close()
-
-        # print("Labels:", labels)
-        # print("Values:", values)
-
-        data = {'labels': labels, 'values': values}
-        print("Data:", data)
-
-        return JSONResponse(content=data)
-
-    except Exception as e:
-        # Handle any errors
-        print(f"An error occurred: {e}")
-        raise e
-
-def generate_data_for_month_from_database(number_of_days: int):
-    labels = []
-    values = []
-
-    try:
-        start_date = datetime.now() - timedelta(days=number_of_days - 1)
-        end_date = datetime.now()
-
-        cursor = connection.cursor()
-
-        query = "SELECT date, consumption FROM consumptions WHERE date >= %s AND date <= %s ORDER BY date"
-        cursor.execute(query, (start_date.date(), end_date.date()))
-        consumption_data = cursor.fetchall()
-        # print(consumption_data[1][1])
-
-        current_date = start_date
-        while current_date <= end_date:
-            date_label = current_date.strftime('%Y-%m-%d')
-            # print(date_label)
-            labels.append(date_label)
-
-            consumption = 0  # Default value if no consumption data found
-            for data in consumption_data:
-                # print(data[0])
-                db_date = data[0].strftime('%Y-%m-%d')
-                if db_date == date_label:  # Check if date matches
-                    consumption = data[1]
-                    values.append(consumption)
-                    break
-
-
-            current_date += timedelta(days=1)
-
-        cursor.close()
-        print("Labels:", labels)
-        print("Values:", values)
-        data = {'labels': labels, 'values': values}
-        return JSONResponse(content=data)
-
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        raise e
-def generate_data_for_year_from_database(number_of_months: int) -> Dict[str, List]:
-    labels = []
-    values = []
-
-    try:
-        # Calculate start and end dates for the year
-        end_date = datetime.now().replace(day=1, month=1, hour=0, minute=0, second=0, microsecond=0)
-        start_date = end_date - timedelta(days=number_of_months * 30)
-
-        # Assuming you have a database connection
-        cursor = connection.cursor()
-
-        # Execute query to retrieve consumption data for the year
-        query = "SELECT date, consumption FROM consumptions WHERE date >= %s AND date <= %s ORDER BY date"
-        cursor.execute(query, (start_date.date(), end_date.date()))
-        consumption_data = cursor.fetchall()
-
-        # Group consumption data by month and year
-        grouped_consumptions = {}
-        for date, consumption in consumption_data:
-            month_year = date.strftime('%B %Y')
-            grouped_consumptions[month_year] = grouped_consumptions.get(month_year, 0) + consumption
-
-        # Iterate over each month in the year
-        current_date = start_date
-        while current_date <= end_date:
-            month_year = current_date.strftime('%B %Y')
-            labels.append(month_year)
-            values.append(grouped_consumptions.get(month_year, 0))
-
-            # Move to the next month
-            current_date += timedelta(days=30)  # Assuming each month has 30 days for simplicity
-
-        cursor.close()
-        print("Labels:", labels)
-        print("Values:", values)
-        data = {'labels': labels, 'values': values}
-        return JSONResponse(content=data)
-
-    except Exception as e:
-        # Handle any errors
-        print(f"An error occurred: {e}")
-        raise e
-    
 
 @app.post("/register")
 async def register(email: str = Form(...), username: str = Form(...),password: str = Form(...), confirmpassword: str = Form(...)):
     try:
-        print("Received form data:")
-        print("Email:", email)
-        print("Username:", username)
-        print("Password:", password)
-        print("Confirm Password:", confirmpassword)
+        # print("Received form data:")
+        # print("Email:", email)
+        # print("Username:", username)
+        # print("Password:", password)
+        # print("Confirm Password:", confirmpassword)
         if not email or not username or not password or not confirmpassword:
             return JSONResponse(content={'error': "Missing Fields"}, status_code=422)
 
@@ -269,7 +77,6 @@ async def register(email: str = Form(...), username: str = Form(...),password: s
 
         if password != confirmpassword:
             return JSONResponse(content={'error': "Password not matched"}, status_code=422)
-        print("Check")
         cursor = connection.cursor()
         cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
         user_exists = cursor.fetchone()
@@ -289,8 +96,6 @@ async def register(email: str = Form(...), username: str = Form(...),password: s
         traceback_str = traceback.format_exc()
         print("Error: ", traceback_str)
         return JSONResponse(content={'error': str(e)}, status_code=500)
-
-
 def validate_email(email):
     email_regex = r'^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$'
     return bool(re.match(email_regex, email, re.IGNORECASE))
@@ -299,8 +104,8 @@ def validate_email(email):
 @app.post("/login")
 async def login(email: str = Form(...), password: str = Form(...)):
     try:
-        print("Email:", email)
-        print("Password:", password)
+        # print("Email:", email)
+        # print("Password:", password)
         if not email or not password:
             return JSONResponse(content={'error': "Missing Fields"}, status_code=422)
 
@@ -337,11 +142,11 @@ def connect_to_mqtt(user_id, ipAddress, port):
 @app.post("/resetemail")
 async def reset_email(email: str = Form(...)):
     try:
-        print("Email:", email)
+        # print("Email:", email)
         cursor = connection.cursor()
         cursor.execute("SELECT id, email, username FROM users WHERE email = %s", (email,))
         user = cursor.fetchone()
-        print("User:", user)
+        # print("User:", user)
         cursor.close()
         if not user:
             return JSONResponse(content={'error': "Password not matched"}, status_code=404)
@@ -388,68 +193,67 @@ async def reset_email(email: str = Form(...)):
         return JSONResponse(content={'error': str(e)}, status_code=500)
 
 # //////////////////////////////////////////////////////////////////////////////////////////////////
-
 # //////////////////////////////////////////////////////////////////////////////////////////////////
 
-# @app.post("/verifyotp")
-# async def verify_otp(email: str = Form(...), otp: str = Form(...)):
+@app.post("/verifyotp")
+async def verify_otp(email: str = Form(...), otp: str = Form(...)):
 
-#     try:
-#         cursor = connection.cursor()
-#         cursor.execute("SELECT otp FROM otps WHERE email = %s ORDER BY created_at DESC LIMIT 1", (email,))
-#         stored_otp = cursor.fetchone()
-#         cursor.close()
+    try:
+        cursor = connection.cursor()
+        cursor.execute("SELECT otp FROM otps WHERE email = %s ORDER BY created_at DESC LIMIT 1", (email,))
+        stored_otp = cursor.fetchone()
+        cursor.close()
         
-#         if not stored_otp:
-#             return JSONResponse(content={'error': "OTP not found"}, status_code=404)
+        if not stored_otp:
+            return JSONResponse(content={'error': "OTP not found"}, status_code=404)
 
-
-        
-#         stored_otp = stored_otp[0] 
-        
-#         if otp != stored_otp:
-#             return JSONResponse(content={'error': "OTP not matched"}, status_code=400)
 
         
-#         return JSONResponse(content={'message': "OTP verified successfully"}, status_code=200)
-#     except Exception as e:
-#         traceback_str = traceback.format_exc()
-#         print("Error: ", traceback_str)
-#         return HTTPException(status_code=500, content=str(e))
+        stored_otp = stored_otp[0] 
+        
+        if otp != stored_otp:
+            return JSONResponse(content={'error': "OTP not matched"}, status_code=400)
+
+        
+        return JSONResponse(content={'message': "OTP verified successfully"}, status_code=200)
+    except Exception as e:
+        traceback_str = traceback.format_exc()
+        print("Error: ", traceback_str)
+        return HTTPException(status_code=500, content=str(e))
 # //////////////////////////////////////////////////////////////////////////////////////////////////
 # //////////////////////////////////////////////////////////////////////////////////////////////////
 
-# @app.post("/resetpassword")
-# async def reset_password(email: str = Form(...), otp: str = Form(...), new_password: str = Form(...)):
-#     try:
-#         # Verify OTP
-#         cursor = connection.cursor()
-#         cursor.execute("SELECT otp FROM otps WHERE email = %s ORDER BY created_at DESC LIMIT 1", (email,))
-#         stored_otp = cursor.fetchone()
-#         cursor.close()
+@app.post("/resetpassword")
+async def reset_password(email: str = Form(...), otp: str = Form(...), new_password: str = Form(...)):
+    try:
+        # Verify OTP
+        cursor = connection.cursor()
+        cursor.execute("SELECT otp FROM otps WHERE email = %s ORDER BY created_at DESC LIMIT 1", (email,))
+        stored_otp = cursor.fetchone()
+        cursor.close()
         
-#         if not stored_otp:
-#             return JSONResponse(content={'error': "OTP not found"}, status_code=500)
+        if not stored_otp:
+            return JSONResponse(content={'error': "OTP not found"}, status_code=500)
 
         
-#         stored_otp = stored_otp[0]  # Extracting the OTP value from the tuple
+        stored_otp = stored_otp[0]  # Extracting the OTP value from the tuple
         
-#         if otp != stored_otp:
-#             return JSONResponse(content={'error': "OTP does not match"}, status_code=400)
+        if otp != stored_otp:
+            return JSONResponse(content={'error': "OTP does not match"}, status_code=400)
 
         
         
-#         # Update password
-#         hashed_password = hashlib.sha256(new_password.encode()).hexdigest()
-#         cursor = connection.cursor()
-#         cursor.execute("UPDATE users SET password = %s WHERE email = %s", (hashed_password, email))
-#         connection.commit()
-#         cursor.close()
-#         return JSONResponse(content={'message': "Password reset successfully"}, status_code=200)
-#     except Exception as e:
-#         traceback_str = traceback.format_exc()
-#         print("Error: ", traceback_str)
-#         return JSONResponse(content={'error': str(e)}, status_code=500)
+        # Update password
+        hashed_password = hashlib.sha256(new_password.encode()).hexdigest()
+        cursor = connection.cursor()
+        cursor.execute("UPDATE users SET password = %s WHERE email = %s", (hashed_password, email))
+        connection.commit()
+        cursor.close()
+        return JSONResponse(content={'message': "Password reset successfully"}, status_code=200)
+    except Exception as e:
+        traceback_str = traceback.format_exc()
+        print("Error: ", traceback_str)
+        return JSONResponse(content={'error': str(e)}, status_code=500)
 
 # //////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -457,7 +261,7 @@ async def reset_email(email: str = Form(...)):
 async def connect(user_id : str = Form(...)):
 
     try:
-        # connect_to_mqtt(user_id, "192.168.1.80", 1883)
+        connect_to_mqtt(user_id, "192.168.1.91", 1883)
         return JSONResponse(content={'message': "Connected"}, status_code=200)
     except Exception as e:
         traceback_str = traceback.format_exc()
@@ -538,10 +342,6 @@ async def touch(switchId: int = Form(...), id: int = Form(...)):
         connection.commit()
     cursor.close()
 
-    
-
-
-
 
 @app.get("/getBoards")
 async def get_boards():
@@ -553,8 +353,6 @@ async def get_boards():
     boards_list = [{"id": board[0], "boardname": board[1], "size": board[2], "available": board[3]} for board in boards]
 
     return JSONResponse(content={'boards': boards_list}, status_code=200)
-
-
 
 @app.post("/roomused")
 async def register_roomused(roomname: str = Form(...), boardid: int = Form(...)):
@@ -588,23 +386,26 @@ async def get_rooms():
         return JSONResponse(content={'error': str(e)}, status_code=500)
 
 
-
 @app.post("/getSwitches")
 async def get_switches(boardId: int = Form(...)):
-    # try:
     cursor = connection.cursor()
     cursor.execute("SELECT id, switchId, name, state FROM switches WHERE boardid = %s", (boardId,))
     switches = cursor.fetchall()
+
+    cursor.execute("SELECT temp, moist, lumn FROM rooms WHERE boardid = %s", (boardId,))
+    sensor_data = cursor.fetchone()
+
     cursor.close()
 
-    switches_list = [{"id": switch[0], "switchId": switch[1],"name": switch[2], "state": switch[3]} for switch in switches]
     if not switches:
         return JSONResponse(content={'error': "No switches added"}, status_code=500)
-    return JSONResponse(content={'switches': switches_list}, status_code=200)
-    # except Exception as e:
-    #     traceback_str = traceback.format_exc()
-    #     print("Error: ", traceback_str)
-    #     return JSONResponse(content={'error': str(e)}, status_code=500)
+
+    switches_list = [{"id": switch[0], "switchId": switch[1], "name": switch[2], "state": switch[3]} for switch in switches]
+    sensor_dict = {"temp": sensor_data[0], "moist": sensor_data[1], "lumn": sensor_data[2]} if sensor_data else {}
+    response_content = {'switches': switches_list, 'sensor_data': sensor_dict}
+    print("Data", response_content)
+
+    return JSONResponse(content=response_content, status_code=200)
 
 @app.get("/getAvailableBoards")
 async def get_available_boards():
@@ -652,7 +453,6 @@ async def get_switches(boardId: int = Form(...)):
     try:
         cursor = connection.cursor()
         
-        # Fetch switches that are not present in the switches table for the given boardId
         cursor.execute("""
             SELECT id FROM switches
             WHERE boardid = %s
@@ -660,7 +460,6 @@ async def get_switches(boardId: int = Form(...)):
         """, (boardId,))
         switches_on_board = {switch for switch in cursor.fetchall()}
         print(switches_on_board)
-        # Fetch all possible switchIds for the given boardId
         cursor.execute("""
             SELECT id FROM switches
             WHERE boardid IS NULL
@@ -668,13 +467,10 @@ async def get_switches(boardId: int = Form(...)):
         """)
         all_switch_ids = {switch['id'] for switch in cursor.fetchall()}
         print(switches_on_board)
-        # Calculate available switches (switchIds not present on the board)
         available_switches = all_switch_ids - switches_on_board
         print(available_switches)
-        # Limit to four available switches
         available_switches = list(available_switches)[:4]
         print(available_switches)
-        # If no available switches, return error
         if not available_switches:
             return JSONResponse(content={'error': "No Switches Available for this board"}, status_code=404)
         
@@ -689,7 +485,6 @@ async def get_switches_count(boardId: int = Form(...)):
     try:
         cursor = connection.cursor()
         
-        # Count the number of rows where boardId matches
         cursor.execute("""
             SELECT COUNT(*) as count FROM switches
             WHERE boardid = %s
@@ -697,23 +492,18 @@ async def get_switches_count(boardId: int = Form(...)):
         count_result = cursor.fetchone()
         print(count_result[0])
         
-        # Check if the count is 0
         if count_result[0] == 0:
-            # Return ids list 1,2,3,4
             ids_list = [1, 2, 3, 4]
         else:
-            # Query to find which switchId is added with the same boardId
             cursor.execute("""
                 SELECT DISTINCT switchId FROM switches
                 WHERE boardid = %s
             """, (boardId,))
             added_switch_ids = [row[0] for row in cursor.fetchall()]
             
-            # Generate the list of other ids
             all_switch_ids = [1, 2, 3, 4]
             other_ids = [id for id in all_switch_ids if id not in added_switch_ids]
             
-            # Return the other ids list
             ids_list = other_ids
         print('\n\n Switch',ids_list)
 
@@ -807,24 +597,6 @@ async def fetch_all_switches_statistics():
     #     print("Error: ", traceback_str)
     #     return JSONResponse(content={'error': str(e)}, status_code=500)
 
-
-
-
-
-# @app.get("/fetchGraph")
-# async def fetch_graph():
-#     # try:
-#         cursor = connection.cursor()
-#         cursor.execute("SELECT id, consumption FROM consumptions")
-#         graph_data = cursor.fetchall()
-#         cursor.close()
-
-#         x_values = [data[1] for data in graph_data]
-#         print('\n\n', x_values)
-#         return JSONResponse(content={'x_values': x_values}, status_code=200)
-#     # except Exception as e:
-#     #     return JSONResponse(content={'error': str(e)}, status_code=500)
-
 @app.post("/deleteRoom")
 async def delete_room(roomId: int = Form(...), boardId: int = Form(...)):
     print(roomId)
@@ -844,3 +616,218 @@ async def delete_room(roomId: int = Form(...), boardId: int = Form(...)):
         print("Error: ", traceback_str)
         return JSONResponse(content={'error': "Getting error while deleting room"}, status_code=500)
 
+@app.post("/fetchGraph")
+async def fetch_graph(frequency: int = Form(...)):
+    try:
+        data = []
+        if frequency == 1:
+            print(f'\n\n{frequency}\n\n')
+            data = generate_data_for_hours()
+        elif frequency == 2:
+            print(f'\n\n{frequency}\n\n')
+            data = generate_data_for_days_from_database(7)
+        elif frequency == 3:
+            data = generate_data_for_month_from_database(30)
+        elif frequency == 4:
+            data = generate_data_for_year_from_database(12)
+        else:
+            raise HTTPException(status_code=400, detail="Invalid frequency value")
+
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/testing")
+async def testing(switchName: str = Form(...)):
+    try:
+        switchName1 = switchName
+        switchName = '/'.join(switchName.split('/')[:-1])
+        print(switchName)
+        switch_name = switchName1[-1]
+        print(switchName, switch_name)
+
+        cursor = connection.cursor()
+        cursor.execute("SELECT * FROM boards WHERE boardname = %s", (switchName,))
+        result = cursor.fetchone()
+
+        cursor.execute("SELECT * FROM switches WHERE boardid = %s AND switchId = %s", (result[0], switch_name,))
+        switch_data = cursor.fetchone()
+
+        print(switch_data)
+
+        if switch_data[2] == 0:
+            cursor.execute("UPDATE switches SET state = %s WHERE switchId = %s AND boardid = %s", (1, switch_data[1], result[0]))
+            connection.commit()
+        else:
+            cursor.execute("UPDATE switches SET state = %s WHERE switchId = %s AND boardid = %s", (0, switch_data[1], result[0]))
+            connection.commit()
+
+        switchName=None
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+
+def generate_data_for_hours():
+
+    try:
+        labels = []
+        values = []
+
+        current_timestamp = datetime.now()
+        cursor = connection.cursor()
+
+        for i in range(24):
+            start_timestamp = current_timestamp - timedelta(hours=i)
+            end_timestamp = start_timestamp + timedelta(hours=1)
+            query = "SELECT `usage` FROM realtime_usages WHERE timestamp >= %s AND timestamp < %s"
+            cursor.execute(query, (start_timestamp, end_timestamp))
+            minute_wise_data = cursor.fetchall()
+
+            total_usage = sum(data[0] for data in minute_wise_data)
+            total_count = len(minute_wise_data)
+
+            average_usage = total_usage / total_count if total_count > 0 else 0
+
+            labels.append(start_timestamp.strftime('%H:00'))
+            values.append(average_usage)
+
+        labels.reverse()
+        values.reverse()
+        
+        cursor.close()
+
+
+        data = {'labels': labels, 'values': values}
+        return JSONResponse(content=data)
+
+    except Exception as e:
+        # Handle any errors
+        print(f"An error occurred: {e}")
+        raise e
+
+def generate_data_for_days_from_database(number_of_days: int):
+
+    try:
+        labels = []
+        values = []
+
+        current_timestamp = datetime.now()
+
+        cursor = connection.cursor()
+
+        for i in range(number_of_days):
+            start_date = current_timestamp - timedelta(days=i)
+            end_date = start_date + timedelta(days=1)
+
+            query = "SELECT consumption FROM consumptions WHERE date >= %s AND date < %s"
+            cursor.execute(query, (start_date.date(), end_date.date()))
+            daily_consumptions = cursor.fetchall()
+
+            total_consumption = sum(data[0] for data in daily_consumptions)
+            average_consumption = total_consumption / len(daily_consumptions) if daily_consumptions else 0
+
+            day_name = start_date.strftime('%a')
+            labels.append(day_name)
+            values.append(average_consumption)
+
+        labels.reverse()
+        values.reverse()
+
+        cursor.close()
+
+        # print("Labels:", labels)
+        # print("Values:", values)
+
+        data = {'labels': labels, 'values': values}
+        print("Data:", data)
+
+        return JSONResponse(content=data)
+
+    except Exception as e:
+        # Handle any errors
+        print(f"An error occurred: {e}")
+        raise e
+
+def generate_data_for_month_from_database(number_of_days: int):
+    labels = []
+    values = []
+
+    try:
+        start_date = datetime.now() - timedelta(days=number_of_days - 1)
+        end_date = datetime.now()
+
+        cursor = connection.cursor()
+
+        query = "SELECT date, consumption FROM consumptions WHERE date >= %s AND date <= %s ORDER BY date"
+        cursor.execute(query, (start_date.date(), end_date.date()))
+        consumption_data = cursor.fetchall()
+
+        current_date = start_date
+        while current_date <= end_date:
+            date_label = current_date.strftime('%m-%d')  # Format to show only month and day
+            labels.append(date_label)
+
+            consumption = 0  # Default value if no consumption data found
+            for data in consumption_data:
+                db_date = data[0].strftime('%m-%d')
+                if db_date == date_label:
+                    consumption = data[1]
+                    values.append(consumption)
+                    break
+
+            current_date += timedelta(days=1)
+
+        cursor.close()
+        print("Labels:", labels)
+        print("Values:", values)
+        data = {'labels': labels, 'values': values}
+        return JSONResponse(content=data)
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        raise e
+
+def generate_data_for_year_from_database(number_of_months: int) -> Dict[str, List]:
+    labels = []
+    values = []
+
+    try:
+        # Calculate start and end dates for the year
+        end_date = datetime.now().replace(day=1, month=1, hour=0, minute=0, second=0, microsecond=0)
+        start_date = end_date - timedelta(days=number_of_months * 30)
+
+        # Assuming you have a database connection
+        cursor = connection.cursor()
+
+        # Execute query to retrieve consumption data for the year
+        query = "SELECT date, consumption FROM consumptions WHERE date >= %s AND date <= %s ORDER BY date"
+        cursor.execute(query, (start_date.date(), end_date.date()))
+        consumption_data = cursor.fetchall()
+
+        # Group consumption data by month and year
+        grouped_consumptions = {}
+        for date, consumption in consumption_data:
+            month_year = date.strftime('%b %y')
+            grouped_consumptions[month_year] = grouped_consumptions.get(month_year, 0) + consumption
+
+        # Iterate over each month in the year
+        current_date = start_date
+        while current_date <= end_date:
+            month_year = current_date.strftime('%b %y')
+            labels.append(month_year)
+            values.append(grouped_consumptions.get(month_year, 0))
+
+            current_date += timedelta(days=30) 
+
+        cursor.close()
+        print("Labels:", labels)
+        print("Values:", values)
+        data = {'labels': labels, 'values': values}
+        return JSONResponse(content=data)
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        raise e
+    
