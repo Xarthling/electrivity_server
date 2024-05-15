@@ -192,9 +192,6 @@ async def reset_email(email: str = Form(...)):
         print("Error: ", traceback_str)
         return JSONResponse(content={'error': str(e)}, status_code=500)
 
-# //////////////////////////////////////////////////////////////////////////////////////////////////
-# //////////////////////////////////////////////////////////////////////////////////////////////////
-
 @app.post("/verifyotp")
 async def verify_otp(email: str = Form(...), otp: str = Form(...)):
 
@@ -220,8 +217,6 @@ async def verify_otp(email: str = Form(...), otp: str = Form(...)):
         traceback_str = traceback.format_exc()
         print("Error: ", traceback_str)
         return HTTPException(status_code=500, content=str(e))
-# //////////////////////////////////////////////////////////////////////////////////////////////////
-# //////////////////////////////////////////////////////////////////////////////////////////////////
 
 @app.post("/resetpassword")
 async def reset_password(email: str = Form(...), otp: str = Form(...), new_password: str = Form(...)):
@@ -261,7 +256,7 @@ async def reset_password(email: str = Form(...), otp: str = Form(...), new_passw
 async def connect(user_id : str = Form(...)):
 
     try:
-        connect_to_mqtt(user_id, "192.168.1.91", 1883)
+        # connect_to_mqtt(user_id, "192.168.1.91", 1883)
         return JSONResponse(content={'message': "Connected"}, status_code=200)
     except Exception as e:
         traceback_str = traceback.format_exc()
@@ -342,7 +337,6 @@ async def touch(switchId: int = Form(...), id: int = Form(...)):
         connection.commit()
     cursor.close()
 
-
 @app.get("/getBoards")
 async def get_boards():
     cursor = connection.cursor()
@@ -384,7 +378,6 @@ async def get_rooms():
         traceback_str = traceback.format_exc()
         print("Error: ", traceback_str)
         return JSONResponse(content={'error': str(e)}, status_code=500)
-
 
 @app.post("/getSwitches")
 async def get_switches(boardId: int = Form(...)):
@@ -436,17 +429,6 @@ async def insert_room(roomname: str = Form(...), boardid: int = Form(...)):
         traceback_str = traceback.format_exc()
         print("Error: ", traceback_str)
         return JSONResponse(content={'error': "Error while adding room"}, status_code=500)
-
-# @app.post("/getAvailableSwitches")
-# async def get_switches(boardId: int = Form(...)):
-#     cursor = connection.cursor()
-#     cursor.execute("SELECT id, noOfAvailableSwitches FROM boards WHERE id = %s", (boardId,))
-#     switch = cursor.fetchone()
-#     cursor.close()
-
-#     switches_list = [{"id": switch[0],"noOfSwitches": switch[1]}]
-
-#     return JSONResponse(content={'switches': switches_list}, status_code=200)
 
 @app.post("/getAvailableSwitches")
 async def get_switches(boardId: int = Form(...)):
@@ -513,28 +495,6 @@ async def get_switches_count(boardId: int = Form(...)):
         print("Error: ", traceback_str)
         return JSONResponse(content={'error': str(e)}, status_code=500)
     
-# @app.post("/getAvailableSwitches")
-# async def get_switches(boardId: int = Form(...)):
-#         try:
-#             cursor = connection.cursor()
-#             cursor.execute("""
-#                 SELECT boards.id, boards.noOfSwitches, boards.noOfAvailableSwitches, switches.switchId
-#                 FROM boards
-#                 JOIN switches ON boards.id = switches.boardId
-#                 WHERE boards.id = %s
-#             """, (boardId,))
-#             switch = cursor.fetchone()
-#             cursor.close()  # Close the cursor after fetching the results
-
-#             print('\n\n Switch', switch)
-#             # Further processing or returning the result
-#         except Exception as e:
-#             traceback_str = traceback.format_exc()
-#             print("Error: ", traceback_str)
-#             return JSONResponse(content={'error': str(e)}, status_code=500)
-
-
-
 @app.post("/insertSwitch")
 async def insert_switch(switchId: int = Form(...), name: str = Form(...), boardId: int = Form(...)):
     try:
@@ -549,7 +509,6 @@ async def insert_switch(switchId: int = Form(...), name: str = Form(...), boardI
         traceback_str = traceback.format_exc()
         print("Error: ", traceback_str)
         return JSONResponse(content={'error': "Getting error while adding switch"}, status_code=500)
-
 
 @app.post("/removeSwitch")
 async def remove_switch(switchId: int = Form(...), boardId: int = Form(...)):
