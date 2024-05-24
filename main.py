@@ -1,5 +1,11 @@
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, Form, HTTPException
+from fastapi import FastAPI, Form, WebSocket, HTTPException, WebSocketDisconnect,Request
+from fastapi.responses import StreamingResponse, JSONResponse
+import json
+import logging
+import asyncio
+import asyncpg
+import contextlib
 from email.mime.multipart import MIMEMultipart
 from starlette.responses import JSONResponse
 from datetime import datetime, timedelta 
@@ -13,11 +19,14 @@ import hashlib
 import smtplib
 import random
 import string
-import re
+import bcrypt
 
 
 app = FastAPI()
 cache = LRUCache(maxsize=1000)
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app.add_middleware(
     CORSMiddleware,
@@ -47,35 +56,121 @@ SMTP_USERNAME = "fawdmuhammad14@gmail.com"
 SMTP_PASSWORD = "vxzxanmeiemaougl"
 client = None
 
+# @app.post("/getSwitches")
+# async def get_switches(boardId: int = Form(...)):
+#     cursor = connection.cursor()
+#     cursor.execute("SELECT id, switchId, name, state FROM switches WHERE boardid = %s", (boardId,))
+#     switches = cursor.fetchall()
+
+#     cursor.execute("SELECT temp, moist, lumn FROM rooms WHERE boardid = %s", (boardId,))
+#     sensor_data = cursor.fetchone()
+
+#     cursor.close()
+
+#     if not switches:
+#         return JSONResponse(content={'error': "No switches added"}, status_code=500)
+
+#     switches_list = [{"id": switch[0], "switchId": switch[1], "name": switch[2], "state": switch[3]} for switch in switches]
+#     sensor_dict = {"temp": sensor_data[0], "moist": sensor_data[1], "lumn": sensor_data[2]} if sensor_data else {}
+#     response_content = {'switches': switches_list, 'sensor_data': sensor_dict}
+#     print("Data", sensor_data)
+
+#     return JSONResponse(content=response_content, status_code=200)
+
+@app.get("/sse_switches")
+async def sse_switches(request: Request, boardId: int):
+    async def event_generator():
+        while True:
+            cursor = connection.cursor()
+            cursor.execute("SELECT id, switchId, name, state FROM switches WHERE boardid = %s", (boardId,))
+            switches = cursor.fetchall()
+
+            cursor.execute("SELECT temp, moist, lumn FROM rooms WHERE boardid = %s", (boardId,))
+            sensor_data = cursor.fetchone()
+            
+            cursor.close()
+            
+            if not switches:
+                yield "data: {}\n\n"
+            else:
+                switches_list = [{"id": switch[0], "switchId": switch[1], "name": switch[2], "state": switch[3]} for switch in switches]
+                sensor_dict = {"temp": sensor_data[0], "moist": sensor_data[1], "lumn": sensor_data[2]} if sensor_data else {}
+                response_content = {'switches': switches_list, 'sensor_data': sensor_dict}
+                # print("Data", response_content)
+
+                yield f"data: {json.dumps(response_content)}\n\n"
+            
+            await asyncio.sleep(2)  
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+async def fetch_all_switches_statistics():
+    try:
+        cursor = connection.cursor()
+        cursor.execute("SELECT id, boardid, roomname FROM rooms")
+        rooms = cursor.fetchall()
+
+        switches_statistics = []
+        for room in rooms:
+            room_id, board_id, room_name = room
+            cursor.execute("SELECT name, state FROM switches WHERE boardid = %s", (board_id,))
+            switches = cursor.fetchall()
+            switches_statistics.append({
+                'room_id': room_id,
+                'boardid': board_id,
+                'room_name': room_name,
+                'switches': [{'name': switch[0], 'state': switch[1]} for switch in switches],
+            })
+        cursor.close()
+        return switches_statistics
+    except Exception as e:
+        traceback_str = traceback.format_exc()
+        logger.error(f"Error: {traceback_str}")
+        return {'error': str(e)}
+
+@app.get("/fetch_all_switches_statistics")
+async def fetch_all_switches_statistics_sse(request: Request):
+    async def event_generator():
+        while True:
+            switches_statistics = await fetch_all_switches_statistics()
+            print('data:',switches_statistics)
+
+            if 'error' not in switches_statistics:
+                yield f"data: {json.dumps(switches_statistics)}\n\n"
+            else:
+                yield f"data: {json.dumps({'error': 'Failed to fetch data'})}\n\n"
+            await asyncio.sleep(2)  
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
 @app.get("/")
 async def root():
     return {"message": "Hello World"}
 
 @app.post("/register")
-async def register(email: str = Form(...), username: str = Form(...),password: str = Form(...), confirmpassword: str = Form(...)):
+async def register(email: str = Form(...), username: str = Form(...), password: str = Form(...), confirmpassword: str = Form(...)):
     try:
-        # if not email or not username or not password or not confirmpassword:
-        #     return JSONResponse(content={'error': "Missing Fields"}, status_code=422)
-
-        # if not validate_email(email):
-        #     return JSONResponse(content={'error': "Please Enter Correct Email"}, status_code=422)
-
-        # if len(password) < 8:
-        #     return JSONResponse(content={'error': "Password length should be more than 8"}, status_code=422)
-
-        # if password != confirmpassword:
-        #     return JSONResponse(content={'error': "Password not matched"}, status_code=422)
         cursor = connection.cursor()
         cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
         user_exists = cursor.fetchone()
         cursor.close()
         if user_exists:
             return JSONResponse(content={'error': "User already exists"}, status_code=500)
-        
-        hashed_password = hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+        # Skip password hashing
+        plain_password = password
 
         cursor = connection.cursor()
-        cursor.execute("INSERT INTO users (email, username, password) VALUES (%s, %s, %s)", (email, username, hashed_password))
+        cursor.execute("INSERT INTO users (email, username, password) VALUES (%s, %s, %s)", (email, username, plain_password))
         connection.commit()
         cursor.close()
 
@@ -84,18 +179,11 @@ async def register(email: str = Form(...), username: str = Form(...),password: s
         traceback_str = traceback.format_exc()
         print("Error: ", traceback_str)
         return JSONResponse(content={'error': str(e)}, status_code=500)
-# def validate_email(email):
-#     email_regex = r'^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$'
-#     return bool(re.match(email_regex, email, re.IGNORECASE))
+
 
 @app.post("/login")
 async def login(email: str = Form(...), password: str = Form(...)):
     try:
-        # print("Email:", email)
-        # print("Password:", password)
-        # if not email or not password:
-        #     return JSONResponse(content={'error': "Missing Fields"}, status_code=422)
-
         cursor = connection.cursor()
         cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
         user = cursor.fetchone()
@@ -104,10 +192,10 @@ async def login(email: str = Form(...), password: str = Form(...)):
         if not user:
             return JSONResponse(content={'error': "Invalid username or password"}, status_code=401)
 
-        stored_password_hash = user[3]
-        input_password_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
+        stored_password_hash = user[3]  # Assuming the hashed password is stored in the database without encoding
+        input_password = password  # Assuming the password provided by the user is in plaintext
 
-        if input_password_hash == stored_password_hash:
+        if input_password == stored_password_hash:
             return JSONResponse(content={'user_id': user[0], 'username': user[2]}, status_code=200)
         else:
             return JSONResponse(content={'error': "Password not matched"}, status_code=401)
@@ -116,6 +204,9 @@ async def login(email: str = Form(...), password: str = Form(...)):
         print("Error: ", traceback_str)
         return JSONResponse(content={'error': str(e)}, status_code=500)
 
+
+# //////////////////////////// MQTT Communication ///////////////////////////////////////////
+
 def connect_to_mqtt(user_id, ipAddress, port):
 
     mqtt_clients[user_id] = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
@@ -123,6 +214,18 @@ def connect_to_mqtt(user_id, ipAddress, port):
     mqtt_clients[user_id].connect(ipAddress, port, 60)
     mqtt_clients[user_id].loop_start()
     print(f"{user_id} connected to {ipAddress} on port no. {port}")
+def send_message(user_id, topic, message):
+    print(topic)
+    try:
+        # if str(user_id) not in mqtt_clients:
+        #     return KeyError(f"User ID {user_id} not found in MQTT clients")
+        # else:
+        mqtt_clients[str(user_id)].publish(topic, message)
+    except Exception as e:
+        traceback_str = traceback.format_exc()
+        print("Error: ", traceback_str)
+        return JSONResponse(content={'error': str(e)}, status_code=500)
+
 
 # //////////////////////////////////////////////////////////////////////////////////////////////////
 @app.post("/resetemail")
@@ -241,7 +344,7 @@ async def reset_password(email: str = Form(...), otp: str = Form(...), new_passw
 @app.post("/connect")
 async def connect(user_id : str = Form(...)):
     try:
-        connect_to_mqtt(user_id, "192.168.1.91", 1883)
+        # connect_to_mqtt(user_id, "192.168.1.91", 1883)
         return JSONResponse(content={'message': "Connected"}, status_code=200)
     except Exception as e:
         traceback_str = traceback.format_exc()
@@ -257,18 +360,6 @@ async def disconnect(user_id : str = Form(...)):
             return JSONResponse(content={'message': "Disconnected"}, status_code=200)
         else:
             return JSONResponse(content={'error': "Not connected to MQTT"}, status_code=500)
-    except Exception as e:
-        traceback_str = traceback.format_exc()
-        print("Error: ", traceback_str)
-        return JSONResponse(content={'error': str(e)}, status_code=500)
-
-def send_message(user_id, topic, message):
-    print(topic)
-    try:
-        # if str(user_id) not in mqtt_clients:
-        #     return KeyError(f"User ID {user_id} not found in MQTT clients")
-        # else:
-        mqtt_clients[str(user_id)].publish(topic, message)
     except Exception as e:
         traceback_str = traceback.format_exc()
         print("Error: ", traceback_str)
@@ -387,8 +478,8 @@ async def get_rooms():
         print("Error: ", traceback_str)
         return JSONResponse(content={'error': str(e)}, status_code=500)
 
-@app.post("/getSwitches")
-async def get_switches(boardId: int = Form(...)):
+# @app.post("/getSwitches")
+# async def get_switches(boardId: int = Form(...)):
     cursor = connection.cursor()
     cursor.execute("SELECT id, switchId, name, state FROM switches WHERE boardid = %s", (boardId,))
     switches = cursor.fetchall()
@@ -410,6 +501,8 @@ async def get_switches(boardId: int = Form(...)):
 
 @app.get("/getAvailableBoards")
 async def get_available_boards():
+    print("hITTING ")
+
     try:
         cursor = connection.cursor()
         cursor.execute("SELECT boards.id, boards.boardname FROM boards LEFT JOIN rooms ON boards.id = rooms.boardid WHERE rooms.boardid IS NULL")
@@ -535,34 +628,34 @@ async def remove_switch(switchId: int = Form(...), boardId: int = Form(...)):
         print("Error: ", traceback_str)
         return JSONResponse(content={'error': "Getting error while removing switch"}, status_code=500)
 
-@app.get("/fetchAllSwitchesStatistics")
-async def fetch_all_switches_statistics():
-    # try:
-        cursor = connection.cursor()
-        cursor.execute("SELECT id, boardid, roomname FROM rooms")
-        rooms = cursor.fetchall()
+# @app.get("/fetchAllSwitchesStatistics")
+# async def fetch_all_switches_statistics():
+#     # try:
+#         cursor = connection.cursor()
+#         cursor.execute("SELECT id, boardid, roomname FROM rooms")
+#         rooms = cursor.fetchall()
 
-        # Iterate through each room and fetch switches associated with it
-        switches_statistics = []
-        for room in rooms:
-            room_id, board_id, room_name = room
-            # Fetch switches for the current room from switches table
-            cursor.execute("SELECT name, state FROM switches WHERE boardid = %s", (board_id,))
-            switches = cursor.fetchall()
-            switches_statistics.append({
-                'room_id': room_id,
-                'boardid':  board_id,
-                'room_name': room_name,
-                'switches': switches,
-            })
-        print('\n\n',switches_statistics)
-        cursor.close()
+#         # Iterate through each room and fetch switches associated with it
+#         switches_statistics = []
+#         for room in rooms:
+#             room_id, board_id, room_name = room
+#             # Fetch switches for the current room from switches table
+#             cursor.execute("SELECT name, state FROM switches WHERE boardid = %s", (board_id,))
+#             switches = cursor.fetchall()
+#             switches_statistics.append({
+#                 'room_id': room_id,
+#                 'boardid':  board_id,
+#                 'room_name': room_name,
+#                 'switches': switches,
+#             })
+#         print('\n\n',switches_statistics)
+#         cursor.close()
 
-        return JSONResponse(content={'switches_statistics': switches_statistics}, status_code=200)
-    # except Exception as e:
-    #     traceback_str = traceback.format_exc()
-    #     print("Error: ", traceback_str)
-    #     return JSONResponse(content={'error': str(e)}, status_code=500)
+#         return JSONResponse(content={'switches_statistics': switches_statistics}, status_code=200)
+#     # except Exception as e:
+#     #     traceback_str = traceback.format_exc()
+#     #     print("Error: ", traceback_str)
+#     #     return JSONResponse(content={'error': str(e)}, status_code=500)
 
 @app.post("/deleteRoom")
 async def delete_room(roomId: int = Form(...), boardId: int = Form(...)):
@@ -683,6 +776,7 @@ def generate_data_for_days_from_database(number_of_days: int):
         # Handle any errors
         print(f"An error occurred: {e}")
         raise e
+
 def generate_data_for_month_from_database(number_of_days: int):
     labels = []
     values = []
@@ -713,8 +807,10 @@ def generate_data_for_month_from_database(number_of_days: int):
             current_date += timedelta(days=1)
 
         cursor.close()
-        print("Labels:", labels)
         print("Values:", values)
+        labels = [label.lstrip('0') if label.startswith('0') else label for label in labels]
+        print("Labels:", labels)
+
         data = {'labels': labels, 'values': values}
         return JSONResponse(content=data)
 
@@ -807,7 +903,7 @@ async def realtimeData(data: str = Form(...), board: str = Form(...), time: str 
     
     try:
         cursor = connection.cursor()
-        usage = float(data)  # Convert data to float if it's numeric usage
+        usage = float(data)  
         timestamp = time
 
         cursor.execute("SELECT * FROM boards WHERE boardname = %s", (boardName,))
